@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Aperçu du lien</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/icons.js"></script>
+</head>
+<body>
+<main>
+  <h1 class="row"><i data-i="shield" data-size="28"></i>Où mène ce lien ?</h1>
+  <section class="card" id="card" hidden>
+    <p class="muted" style="margin:0">Ce lien redirige vers :</p>
+    <p class="warn-host" id="host"></p>
+    <p class="muted" id="full" style="word-break:break-all"></p>
+    <div class="row">
+      <a id="go" class="btn primary" href="#">Continuer<i data-i="arrow-right"></i></a>
+      <button id="report" class="ghost" type="button"><i data-i="flag"></i>Signaler ce lien</button>
+    </div>
+    <p id="msg" class="muted" role="status"></p>
+  </section>
+  <p id="error" role="alert"></p>
+  <p><a class="btn" href="/"><i data-i="link"></i>Créer un lien court</a></p>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const code = decodeURIComponent(location.pathname.split("/").pop());
+  (async () => {
+    try {
+      const res = await fetch("/api/preview/" + encodeURIComponent(code));
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error);
+      $("host").textContent = d.host;
+      $("full").textContent = d.url;
+      $("go").href = "/" + encodeURIComponent(code);
+      $("card").hidden = false;
+    } catch (e) { $("error").textContent = e.message || "Erreur."; }
+  })();
+  $("report").addEventListener("click", async () => {
+    $("report").disabled = true;
+    const res = await fetch("/api/report", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    $("msg").textContent = res.ok ? "Merci, le signalement a été enregistré." : "Signalement impossible pour le moment.";
+  });
+</script>
+</body>
+</html>

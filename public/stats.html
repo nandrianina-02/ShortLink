@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Statistiques du lien</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/icons.js"></script>
+<script src="/qr-modal.js"></script>
+</head>
+<body>
+<main>
+  <p><a class="btn" href="/"><i data-i="arrow-left"></i>Retour</a></p>
+  <h1 id="title">Statistiques</h1>
+  <p id="dest" class="muted dest-line" style="word-break:break-all"></p>
+  <p id="error" role="alert"></p>
+
+  <div id="content" hidden>
+    <div class="kpis">
+      <div class="kpi"><i data-i="eye" data-size="22"></i><b id="k-total">0</b><span>Vues totales</span></div>
+      <div class="kpi"><i data-i="users" data-size="22"></i><b id="k-uniq">0</b><span>Visiteurs uniques</span></div>
+      <div class="kpi"><i data-i="clock" data-size="22"></i><b id="k-24h">0</b><span>Dernières 24 h</span></div>
+      <div class="kpi"><i data-i="calendar" data-size="22"></i><b id="k-7d">0</b><span>7 derniers jours</span></div>
+    </div>
+
+    <section class="card">
+      <h2><i data-i="bar-chart"></i>Vues par jour (30 jours)</h2>
+      <div id="chart"></div>
+    </section>
+
+    <div class="cols">
+      <section class="card"><h2><i data-i="external"></i>Sources</h2><div id="b-referrers" class="bars"></div></section>
+      <section class="card"><h2><i data-i="globe"></i>Pays</h2><div id="b-countries" class="bars"></div></section>
+      <section class="card"><h2><i data-i="monitor"></i>Appareils</h2><div id="b-devices" class="bars"></div></section>
+      <section class="card"><h2><i data-i="compass"></i>Navigateurs</h2><div id="b-browsers" class="bars"></div></section>
+      <section class="card"><h2><i data-i="layers"></i>Systèmes</h2><div id="b-os" class="bars"></div></section>
+      <section class="card"><h2><i data-i="info"></i>Infos</h2><p id="info" class="muted" style="margin:0"></p></section>
+    </div>
+
+    <section class="card">
+      <h2><i data-i="qr-code"></i>QR code</h2>
+      <div class="row">
+        <button id="qrBtn" type="button"><i data-i="qr-code"></i>Afficher le QR code</button>
+        <a id="preview" class="btn" href="#"><i data-i="eye"></i>Page d'aperçu (avec signalement)</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2><i data-i="clock"></i>Historique des dernières vues</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Date</th><th>Source</th><th>Pays</th><th>Appareil</th><th>Navigateur</th><th>Système</th></tr></thead>
+          <tbody id="recent"></tbody>
+        </table>
+      </div>
+      <p id="noRecent" class="muted" hidden>Aucune vue pour l'instant.</p>
+    </section>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const code = decodeURIComponent(location.pathname.split("/").pop());
+  function ownerToken() { try { return localStorage.getItem("owner") || ""; } catch { return ""; } }
+  const fmt = (d) => new Date(d).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+
+  function bars(id, rows) {
+    const box = $(id);
+    box.replaceChildren();
+    if (!rows.length) { box.textContent = "Pas encore de données."; box.className = "muted"; return; }
+    box.className = "bars";
+    const max = Math.max(...rows.map((r) => r.count));
+    for (const r of rows) {
+      const line = document.createElement("div"); line.className = "bar";
+      const l = document.createElement("span"); l.textContent = r.label; l.title = r.label;
+      l.style.overflow = "hidden"; l.style.textOverflow = "ellipsis"; l.style.whiteSpace = "nowrap";
+      const track = document.createElement("div");
+      const fill = document.createElement("i"); fill.style.width = Math.max(4, (r.count / max) * 100) + "%";
+      track.append(fill);
+      const n = document.createElement("em"); n.textContent = r.count;
+      line.append(l, track, n);
+      box.append(line);
+    }
+  }
+
+  function chart(daily) {
+    const W = 720, H = 170, pad = 22, bw = W / daily.length;
+    const max = Math.max(1, ...daily.map((d) => d.count));
+    let svg = `<svg class="chart" viewBox="0 0 ${W} ${H + pad}" role="img" aria-label="Vues par jour">`;
+    daily.forEach((d, i) => {
+      const h = (d.count / max) * H;
+      svg += `<rect x="${i * bw + 2}" y="${H - h}" width="${bw - 4}" height="${Math.max(h, d.count ? 2 : 1)}" rx="2" opacity="${d.count ? 1 : .25}"><title>${d.date} : ${d.count} vue(s)</title></rect>`;
+    });
+    svg += `<text x="0" y="${H + 16}">${daily[0].date}</text>`;
+    svg += `<text x="${W}" y="${H + 16}" text-anchor="end">${daily[daily.length - 1].date}</text>`;
+    svg += `<text x="${W}" y="10" text-anchor="end">max ${max}</text></svg>`;
+    $("chart").innerHTML = svg; // uniquement des nombres et dates générés par le serveur
+  }
+
+  async function load() {
+    try {
+      const res = await fetch("/api/stats/" + encodeURIComponent(code), { headers: { "x-owner": ownerToken() } });
+      const s = await res.json();
+      if (!res.ok) throw new Error(s.error || "Erreur");
+      $("title").textContent = s.shortUrl.replace(/^https?:\/\//, "");
+      $("dest").innerHTML = icon("arrow-right");
+      const dt = document.createElement("span"); dt.textContent = s.url; $("dest").append(dt);
+      $("k-total").textContent = s.total;
+      $("k-uniq").textContent = s.uniques;
+      $("k-24h").textContent = s.last24h;
+      $("k-7d").textContent = s.last7d;
+      $("qrBtn").onclick = () => openQr(s.code, s.shortUrl);
+      $("preview").href = "/p/" + s.code;
+      chart(s.daily);
+      bars("b-referrers", s.referrers); bars("b-countries", s.countries);
+      bars("b-devices", s.devices); bars("b-browsers", s.browsers); bars("b-os", s.os);
+      $("info").textContent = `Créé le ${fmt(s.createdAt)}` +
+        (s.expiresAt ? `, expire le ${fmt(s.expiresAt)}` : ", sans expiration") +
+        ". Les robots et aperçus de liens ne sont pas comptés." + (s.disabled ? " Ce lien est désactivé." : "");
+      const tb = $("recent"); tb.replaceChildren();
+      $("noRecent").hidden = s.recent.length > 0;
+      for (const r of s.recent) {
+        const tr = document.createElement("tr");
+        [fmt(r.at), r.referrer, r.country, r.device, r.browser, r.os].forEach((v) => {
+          const td = document.createElement("td"); td.textContent = v || "—"; tr.append(td);
+        });
+        tb.append(tr);
+      }
+      $("content").hidden = false;
+      $("error").textContent = "";
+    } catch (e) {
+      $("content").hidden = true;
+      $("error").textContent = e.message;
+    }
+  }
+  load();
+  setInterval(load, 30000);
+</script>
+</body>
+</html>

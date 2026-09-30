@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Raccourcir un lien</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/icons.js"></script>
+<script src="/qr-modal.js"></script>
+</head>
+<body>
+<main>
+  <div class="topbar">
+    <span class="brand"><i data-i="link"></i>shortlink</span>
+    <div class="right">
+      <span class="who"><i data-i="user"></i><span id="who">Non connecté</span></span>
+      <a id="adminLink" class="btn" href="/admin" hidden><i data-i="shield"></i>Admin</a>
+      <button id="authBtn" class="ghost" type="button"></button>
+    </div>
+  </div>
+
+  <h1>Un lien plus court, c'est plus simple à partager.</h1>
+  <p class="lead">Colle ton lien, puis suis les vues depuis la page de statistiques.</p>
+
+  <form id="form" class="card">
+    <div>
+      <label for="url">Lien à raccourcir</label>
+      <input id="url" type="text" inputmode="url" placeholder="https://exemple.com/un-tres-long-lien" required autocomplete="off">
+    </div>
+    <div class="grid2">
+      <div>
+        <label for="alias">Nom personnalisé (facultatif)</label>
+        <div class="alias"><span id="base"></span><input id="alias" placeholder="mon-lien" maxlength="30" autocomplete="off"></div>
+      </div>
+      <div>
+        <label for="exp">Expiration</label>
+        <select id="exp">
+          <option value="">Jamais</option>
+          <option value="1">Dans 1 jour</option>
+          <option value="7">Dans 7 jours</option>
+          <option value="30">Dans 30 jours</option>
+        </select>
+      </div>
+    </div>
+    <p id="error" role="alert"></p>
+    <button id="submit" type="submit"><i data-i="link"></i>Raccourcir le lien</button>
+  </form>
+
+  <section id="result" class="card" hidden aria-live="polite">
+    <div style="display:grid;gap:10px">
+      <a id="short" class="short" href="#" target="_blank" rel="noopener"></a>
+      <div class="row">
+        <button id="copy" type="button"><i data-i="copy"></i>Copier</button>
+        <a id="statsLink" class="btn" href="#"><i data-i="bar-chart"></i>Stats</a>
+        <button id="qrBtn" type="button" class="ghost"><i data-i="qr-code"></i>QR code</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Mes liens</h2>
+    <p id="hint" class="muted">L'historique est lié à ce navigateur. Crée un compte pour le retrouver partout.</p>
+    <p id="empty" class="muted">Aucun lien pour l'instant.</p>
+    <div id="list"></div>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <div class="tabs">
+    <button type="button" class="ghost active" data-mode="login"><i data-i="log-in"></i>Connexion</button>
+    <button type="button" class="ghost" data-mode="register"><i data-i="user"></i>Créer un compte</button>
+  </div>
+  <form id="authForm">
+    <div><label for="email">Email</label><input id="email" type="email" required autocomplete="email"></div>
+    <div><label for="password">Mot de passe (8 caractères minimum)</label><input id="password" type="password" required minlength="8" maxlength="72" autocomplete="current-password"></div>
+    <p id="authError" role="alert" style="color:var(--err);margin:0;min-height:1.4em"></p>
+    <div class="row">
+      <button id="authSubmit" type="submit"><i data-i="log-in"></i>Se connecter</button>
+      <button type="button" class="ghost" id="authCancel"><i data-i="x"></i>Annuler</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fmt = (d) => new Date(d).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+
+  function getOwner() {
+    try {
+      let o = localStorage.getItem("owner");
+      if (!o) { o = crypto.randomUUID(); localStorage.setItem("owner", o); }
+      return o;
+    } catch { return "session-" + Math.random().toString(36).slice(2, 20); }
+  }
+  const headers = { "Content-Type": "application/json", "x-owner": getOwner() };
+  $("base").textContent = location.host + "/";
+
+  async function copy(text, btn) {
+    const old = btn.innerHTML;
+    try { await navigator.clipboard.writeText(text); setLabel(btn, "check", "Copié"); }
+    catch { setLabel(btn, "alert", "Copie impossible"); }
+    setTimeout(() => (btn.innerHTML = old), 1500);
+  }
+
+  /* ----- Compte ----- */
+  let loggedIn = false, mode = "login";
+  async function refreshMe() {
+    const d = await (await fetch("/api/auth/me", { headers })).json();
+    loggedIn = Boolean(d.email);
+    $("who").textContent = d.email || "Non connecté";
+    setLabel($("authBtn"), loggedIn ? "log-out" : "log-in", loggedIn ? "Déconnexion" : "Connexion / Inscription");
+    $("hint").hidden = loggedIn;
+    $("adminLink").hidden = !d.admin;
+  }
+  function setMode(m) {
+    mode = m;
+    document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+    setLabel($("authSubmit"), m === "login" ? "log-in" : "user", m === "login" ? "Se connecter" : "Créer mon compte");
+    $("password").autocomplete = m === "login" ? "current-password" : "new-password";
+    $("authError").textContent = "";
+  }
+  document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
+  $("authCancel").onclick = () => $("dlg").close();
+  $("authBtn").onclick = async () => {
+    if (loggedIn) {
+      await fetch("/api/auth/logout", { method: "POST", headers });
+      await refreshMe(); loadList();
+    } else { setMode("login"); $("dlg").showModal(); }
+  };
+  $("authForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("authError").textContent = "";
+    const res = await fetch("/api/auth/" + mode, {
+      method: "POST", headers,
+      body: JSON.stringify({ email: $("email").value, password: $("password").value }),
+    });
+    const d = await res.json();
+    if (!res.ok) { $("authError").textContent = d.error || "Erreur."; return; }
+    $("authForm").reset(); $("dlg").close();
+    await refreshMe(); loadList();
+  });
+
+  /* ----- Liste ----- */
+  async function loadList() {
+    const links = await (await fetch("/api/my-links", { headers })).json();
+    const list = $("list");
+    list.replaceChildren();
+    $("empty").hidden = links.length > 0;
+    for (const l of links) {
+      const item = document.createElement("div");
+      item.className = "link-item";
+
+      const top = document.createElement("div");
+      top.className = "row";
+      const a = document.createElement("a");
+      a.className = "short"; a.href = l.shortUrl; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = l.shortUrl;
+      const views = iconEl("span", "views", "eye", `${l.clicks} vue${l.clicks > 1 ? "s" : ""}`);
+      const bCopy = iconEl("button", "ghost", "copy", "Copier");
+      bCopy.onclick = () => copy(l.shortUrl, bCopy);
+      const bStats = iconEl("a", "btn", "bar-chart", "Stats");
+      bStats.href = "/stats/" + l.code;
+      const bQr = iconEl("button", "ghost", "qr-code", "QR");
+      bQr.type = "button";
+      bQr.onclick = () => openQr(l.code, l.shortUrl);
+      const bDel = iconEl("button", "ghost danger", "trash", "Supprimer");
+      bDel.onclick = async () => {
+        if (!confirm("Supprimer ce lien et ses statistiques ?")) return;
+        await fetch("/api/links/" + l.code, { method: "DELETE", headers });
+        loadList();
+      };
+      top.append(a, views, bCopy, bStats, bQr, bDel);
+
+      const dest = document.createElement("div");
+      dest.className = "dest"; dest.textContent = l.url;
+      const meta = document.createElement("div");
+      meta.className = "row badge";
+      const expired = l.expiresAt && new Date(l.expiresAt) < new Date();
+      meta.append(iconEl("span", "badge-i", "calendar", `Créé le ${fmt(l.createdAt)}`));
+      if (l.expiresAt) meta.append(iconEl("span", "badge-i", "clock", `${expired ? "Expiré" : "Expire"} le ${fmt(l.expiresAt)}`));
+      item.append(top, dest, meta);
+      if (l.disabled) item.append(iconEl("div", "tag", "ban", "Désactivé après plusieurs signalements"));
+      list.append(item);
+    }
+  }
+
+  /* ----- Création ----- */
+  $("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("error").textContent = "";
+    $("result").hidden = true;
+    $("submit").disabled = true;
+    try {
+      const res = await fetch("/api/shorten", {
+        method: "POST", headers,
+        body: JSON.stringify({ url: $("url").value, alias: $("alias").value, expiresInDays: $("exp").value }),
+      });
+      const data = await res.json();
+      if (res.status === 401) { setMode("login"); $("dlg").showModal(); }
+      if (!res.ok) throw new Error(data.error || "Une erreur est survenue.");
+      $("short").href = data.shortUrl;
+      $("short").textContent = data.shortUrl;
+      $("statsLink").href = "/stats/" + data.code;
+      $("qrBtn").onclick = () => openQr(data.code, data.shortUrl);
+      $("copy").onclick = () => copy(data.shortUrl, $("copy"));
+      $("result").hidden = false;
+      $("form").reset();
+      loadList();
+    } catch (err) {
+      $("error").textContent = err.message;
+    } finally {
+      $("submit").disabled = false;
+    }
+  });
+
+  setLabel($("authBtn"), "log-in", "Connexion / Inscription");
+  refreshMe();
+  loadList();
+</script>
+</body>
+</html>

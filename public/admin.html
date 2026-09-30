@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Administration</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/icons.js"></script>
+</head>
+<body>
+<main>
+  <p><a class="btn" href="/"><i data-i="arrow-left"></i>Retour</a></p>
+  <h1 class="row"><i data-i="shield" data-size="28"></i>Administration</h1>
+  <p id="denied" class="card" hidden><i data-i="alert"></i>Accès réservé aux administrateurs. Connecte-toi avec un compte listé dans <code>ADMIN_EMAILS</code> depuis la <a href="/">page d'accueil</a>, puis reviens ici.</p>
+
+  <div id="app" hidden>
+    <div class="kpis">
+      <div class="kpi"><i data-i="flag" data-size="22"></i><b id="k-reported">0</b><span>Liens signalés</span></div>
+      <div class="kpi"><i data-i="ban" data-size="22"></i><b id="k-disabled">0</b><span>Liens désactivés</span></div>
+      <div class="kpi"><i data-i="link" data-size="22"></i><b id="k-links">0</b><span>Liens au total</span></div>
+      <div class="kpi"><i data-i="users" data-size="22"></i><b id="k-users">0</b><span>Comptes</span></div>
+    </div>
+
+    <section class="card">
+      <div class="tabs wide">
+        <button type="button" class="ghost active" data-tab="reports"><i data-i="flag"></i>Signalements</button>
+        <button type="button" class="ghost" data-tab="all"><i data-i="list"></i>Tous les liens</button>
+      </div>
+      <div id="searchBox" hidden style="margin-bottom:12px">
+        <label for="q" class="badge-i"><i data-i="search"></i>Rechercher un code ou un domaine</label>
+        <input id="q" type="search" placeholder="ex. exemple.com ou mon-lien" autocomplete="off">
+      </div>
+      <p id="empty" class="muted" hidden></p>
+      <div id="list"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fmt = (d) => new Date(d).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  let tab = "reports", timer;
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  async function api(url, opts) {
+    const res = await fetch(url, opts);
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403 || res.status === 401) { $("app").hidden = true; $("denied").hidden = false; throw new Error("denied"); }
+    if (!res.ok) throw new Error(data.error || "Erreur");
+    return data;
+  }
+
+  async function act(code, action) {
+    await api(`/api/admin/links/${encodeURIComponent(code)}/${action}`, { method: "POST" });
+    refresh();
+  }
+
+  function button(label, ic, onclick, cls = "ghost") {
+    const b = iconEl("button", cls, ic, label);
+    b.type = "button";
+    b.onclick = onclick;
+    return b;
+  }
+
+  function row(l) {
+    const box = el("div", "adm-row");
+
+    const head = el("div", "row");
+    const a = el("a", "short", location.host + "/" + l.code);
+    a.href = "/p/" + encodeURIComponent(l.code); // page d'aperçu, ne compte pas de vue
+    a.target = "_blank"; a.rel = "noopener";
+    head.append(a);
+    if (l.reports) head.append(iconEl("span", "pill bad", "flag", `${l.reports} signalement${l.reports > 1 ? "s" : ""}`));
+    if (l.disabled) head.append(iconEl("span", "pill bad", "ban", "Désactivé"));
+    head.append(iconEl("span", "pill", l.hasAccount ? "user" : "globe", l.hasAccount ? "Compte" : "Anonyme"));
+
+    // Destination affichée en texte (non cliquable) pour éviter d'ouvrir un site dangereux par erreur
+    const dest = el("div", "adm-url");
+    dest.append(el("span", "adm-host", l.host), document.createTextNode("  " + l.url));
+
+    const meta = el("div", "row badge");
+    meta.append(
+      iconEl("span", "badge-i", "eye", `${l.clicks} vue${l.clicks > 1 ? "s" : ""}`),
+      iconEl("span", "badge-i", "calendar", `Créé le ${fmt(l.createdAt)}`));
+    if (l.lastReport) meta.append(iconEl("span", "badge-i", "flag", `Dernier signalement le ${fmt(l.lastReport)}`));
+
+    box.append(head, dest, meta);
+    if (l.reasons && l.reasons.length) box.append(el("div", "badge", "Motifs : " + l.reasons.join(" / ")));
+
+    const actions = el("div", "row");
+    actions.append(l.disabled
+      ? button("Réactiver", "undo", () => act(l.code, "enable"))
+      : button("Désactiver", "ban", () => act(l.code, "disable")));
+    if (l.reports) actions.append(button("Ignorer les signalements", "x", () => act(l.code, "dismiss")));
+    actions.append(button("Supprimer", "trash", async () => {
+      if (!confirm(`Supprimer /${l.code} et toutes ses statistiques ?`)) return;
+      await api("/api/admin/links/" + encodeURIComponent(l.code), { method: "DELETE" });
+      refresh();
+    }, "ghost danger"));
+    box.append(actions);
+    return box;
+  }
+
+  async function refresh() {
+    try {
+      const o = await api("/api/admin/overview");
+      $("k-reported").textContent = o.reported;
+      $("k-disabled").textContent = o.disabled;
+      $("k-links").textContent = o.links;
+      $("k-users").textContent = o.users;
+      $("denied").hidden = true; $("app").hidden = false;
+
+      const url = tab === "reports" ? "/api/admin/reports" : "/api/admin/links?q=" + encodeURIComponent($("q").value);
+      const rows = await api(url);
+      $("list").replaceChildren(...rows.map(row));
+      $("empty").hidden = rows.length > 0;
+      $("empty").textContent = tab === "reports" ? "Aucun lien signalé pour l'instant." : "Aucun lien trouvé.";
+    } catch (e) { if (e.message !== "denied") $("empty").textContent = e.message; }
+  }
+
+  document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => {
+    tab = b.dataset.tab;
+    document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
+    $("searchBox").hidden = tab !== "all";
+    refresh();
+  }));
+  $("q").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(refresh, 300); });
+
+  refresh();
+</script>
+</body>
+</html>
