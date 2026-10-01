@@ -13,13 +13,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 const SALT = process.env.HASH_SALT || "change-moi";
-const TZ = process.env.TZ_STATS || "Indian/Antananarivo";
 const JWT_SECRET = process.env.JWT_SECRET;
-const REQUIRE_LOGIN = process.env.REQUIRE_LOGIN === "true";
-const SB_KEY = process.env.SAFE_BROWSING_KEY;
 const IS_PROD = process.env.NODE_ENV === "production";
-const ADMINS = (process.env.ADMIN_EMAILS || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
-const REPORT_THRESHOLD = 3; // signalements distincts avant désactivation automatique
+const csv = (v) => (v || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+const ENV_ADMINS = csv(process.env.ADMIN_EMAILS); // toujours administrateurs, non modifiables depuis le site
 const DAY = 864e5;
 
 if (!JWT_SECRET) throw new Error("JWT_SECRET manquant (fichier .env ou variables d'environnement)");
@@ -35,6 +32,35 @@ const connectDB = () => (dbReady ||= mongoose
   .connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 8000 })
   .catch((e) => { dbReady = null; throw e; }));
 app.use((req, res, next) => connectDB().then(() => next(), next));
+
+/* ---------- Réglages du site ----------
+   Les valeurs du .env servent de défaut ; celles enregistrées depuis /admin (collection settings) les remplacent.
+   Chaque instance relit la base au plus toutes les 30 s. */
+const Setting = mongoose.model("Setting", new mongoose.Schema(
+  { _id: String, values: { type: mongoose.Schema.Types.Mixed, default: {} } },
+  { timestamps: true }
+));
+const DEFAULTS = {
+  requireLogin: process.env.REQUIRE_LOGIN === "true",
+  reportThreshold: 3, // signalements distincts avant désactivation automatique
+  shortenLimitAnon: 10, // liens créés par 15 min sans compte
+  shortenLimitUser: 60, // liens créés par 15 min avec compte
+  blockedDomains: csv(process.env.BLOCKED_DOMAINS),
+  adminEmails: [],
+  tzStats: process.env.TZ_STATS || "Indian/Antananarivo",
+  safeBrowsingKey: process.env.SAFE_BROWSING_KEY || "",
+};
+let cfg = { ...DEFAULTS }, cfgAt = 0;
+async function loadSettings(force) {
+  if (force || Date.now() - cfgAt > 30e3) {
+    const doc = await Setting.findById("site").lean();
+    cfg = { ...DEFAULTS, ...(doc ? doc.values : {}) };
+    cfgAt = Date.now();
+  }
+  return cfg;
+}
+app.use((req, res, next) => loadSettings().then((c) => { req.cfg = c; next(); }, next));
+const isAdminEmail = (email, c) => Boolean(email) && (ENV_ADMINS.includes(email) || c.adminEmails.includes(email));
 
 /* ---------- Modèles ---------- */
 const User = mongoose.model("User", new mongoose.Schema(
@@ -73,14 +99,13 @@ const ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const RESERVED = new Set(["api", "app", "app.html", "stats", "p", "admin", "admin.html", "index", "index.html", "stats.html", "preview.html", "404.html", "style.css", "favicon.ico"]);
 const randomCode = (len = 6) => Array.from(crypto.randomBytes(len), (b) => ALPHABET[b % ALPHABET.length]).join("");
 const sha = (s) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);
-const dayKey = (t) => new Date(t).toLocaleDateString("sv-SE", { timeZone: TZ });
+const dayKey = (t, tz) => new Date(t).toLocaleDateString("sv-SE", { timeZone: tz });
 
 /* ----- Sécurité des URL ----- */
 const BUILTIN_BLOCKED = ["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly", "rebrand.ly", "cutt.ly", "shorturl.at", "t.ly"];
-const BLOCKED = [...BUILTIN_BLOCKED, ...(process.env.BLOCKED_DOMAINS || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)];
-const hostBlocked = (h) => BLOCKED.some((d) => h === d || h.endsWith("." + d));
+const hostBlocked = (h, extra) => [...BUILTIN_BLOCKED, ...extra].some((d) => h === d || h.endsWith("." + d));
 
-function checkUrl(input) {
+function checkUrl(input, c) {
   let value = String(input || "").trim();
   if (!value) return { error: "Colle un lien à raccourcir." };
   if (value.length > 2048) return { error: "Lien trop long." };
@@ -93,14 +118,14 @@ function checkUrl(input) {
   if (!host.includes(".") || host.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(host))
     return { error: "Utilise un nom de domaine (pas d'adresse IP ni de localhost)." };
   if (u.origin === new URL(BASE_URL).origin) return { error: "Impossible de raccourcir un lien de ce site." };
-  if (hostBlocked(host)) return { error: "Ce domaine n'est pas accepté." };
+  if (hostBlocked(host, c.blockedDomains)) return { error: "Ce domaine n'est pas accepté." };
   return { url: u.toString() };
 }
 
-async function isUnsafe(url) {
-  if (!SB_KEY) return false;
+async function isUnsafe(url, key) {
+  if (!key) return false;
   try {
-    const r = await fetch(`https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${SB_KEY}`, {
+    const r = await fetch(`https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${encodeURIComponent(key)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: AbortSignal.timeout(4000),
@@ -165,7 +190,7 @@ const authLimiter = rateLimit({
   message: { error: "Trop de tentatives, réessaie dans quelques minutes." },
 });
 const shortenLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, max: (req) => (req.userId ? 60 : 10), standardHeaders: true, legacyHeaders: false,
+  windowMs: 15 * 60 * 1000, max: (req) => (req.userId ? req.cfg.shortenLimitUser : req.cfg.shortenLimitAnon), standardHeaders: true, legacyHeaders: false,
   message: { error: "Trop de liens créés, réessaie dans quelques minutes (ou connecte-toi)." },
 });
 const reportLimiter = rateLimit({
@@ -202,17 +227,20 @@ app.post("/api/auth/logout", (req, res) => { res.clearCookie("token", COOKIE_OPT
 app.get("/api/auth/me", wrap(async (req, res) => {
   const user = req.userId ? await User.findById(req.userId).select("email").lean() : null;
   if (req.userId && !user) res.clearCookie("token", COOKIE_OPTS);
-  res.json({ email: user ? user.email : null, admin: Boolean(user && ADMINS.includes(user.email)) });
+  res.json({ email: user ? user.email : null, admin: Boolean(user && isAdminEmail(user.email, req.cfg)) });
 }));
+
+// Réglages publics utiles à l'interface (aucune donnée sensible)
+app.get("/api/config", (req, res) => res.json({ requireLogin: req.cfg.requireLogin }));
 
 /* ---------- API : liens ---------- */
 app.post("/api/shorten", shortenLimiter, wrap(async (req, res) => {
-  if (REQUIRE_LOGIN && !req.userId) return res.status(401).json({ error: "Connecte-toi pour créer un lien." });
+  if (req.cfg.requireLogin && !req.userId) return res.status(401).json({ error: "Connecte-toi pour créer un lien." });
 
-  const checked = checkUrl(req.body.url);
+  const checked = checkUrl(req.body.url, req.cfg);
   if (checked.error) return res.status(400).json({ error: checked.error });
   const url = checked.url;
-  if (await isUnsafe(url)) return res.status(400).json({ error: "Ce lien est signalé comme dangereux et ne peut pas être raccourci." });
+  if (await isUnsafe(url, req.cfg.safeBrowsingKey)) return res.status(400).json({ error: "Ce lien est signalé comme dangereux et ne peut pas être raccourci." });
 
   let code = String(req.body.alias || "").trim();
   if (code) {
@@ -284,7 +312,7 @@ app.post("/api/report", reportLimiter, wrap(async (req, res) => {
     await Report.create({ code, reporter, reason: String(req.body.reason || "").slice(0, 200) });
   } catch (e) { if (e.code !== 11000) throw e; }
   const n = await Report.countDocuments({ code });
-  if (n >= REPORT_THRESHOLD && !link.disabled) {
+  if (n >= req.cfg.reportThreshold && !link.disabled) {
     link.disabled = true;
     await link.save();
     console.warn(`Lien /${code} désactivé après ${n} signalements : ${link.url}`);
@@ -295,6 +323,7 @@ app.post("/api/report", reportLimiter, wrap(async (req, res) => {
 /* ---------- API : stats ---------- */
 app.get("/api/stats/:code", wrap(async (req, res) => {
   const { code } = req.params;
+  const TZ = req.cfg.tzStats;
   const link = await Link.findOne({ code }).lean();
   if (!link) return res.status(404).json({ error: "Lien introuvable." });
   if (link.owner && link.owner !== getOwner(req))
@@ -323,7 +352,7 @@ app.get("/api/stats/:code", wrap(async (req, res) => {
 
   const byDay = new Map(daily.map((d) => [d._id, d.count]));
   const series = [];
-  for (let i = 29; i >= 0; i--) { const date = dayKey(now - i * DAY); series.push({ date, count: byDay.get(date) || 0 }); }
+  for (let i = 29; i >= 0; i--) { const date = dayKey(now - i * DAY, TZ); series.push({ date, count: byDay.get(date) || 0 }); }
 
   res.json({
     code, url: link.url, shortUrl: `${BASE_URL}/${code}`, createdAt: link.createdAt, expiresAt: link.expiresAt,
@@ -335,7 +364,8 @@ app.get("/api/stats/:code", wrap(async (req, res) => {
 /* ---------- API : administration ---------- */
 const requireAdmin = wrap(async (req, res, next) => {
   const user = req.userId ? await User.findById(req.userId).select("email").lean() : null;
-  if (!user || !ADMINS.includes(user.email)) return res.status(403).json({ error: "Accès réservé aux administrateurs." });
+  if (!user || !isAdminEmail(user.email, req.cfg)) return res.status(403).json({ error: "Accès réservé aux administrateurs." });
+  req.adminEmail = user.email;
   next();
 });
 const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -388,6 +418,73 @@ app.delete("/api/admin/links/:code", requireAdmin, wrap(async (req, res) => {
   if (!link) return res.status(404).json({ error: "Lien introuvable." });
   await Promise.all([Click.deleteMany({ code: link.code }), Report.deleteMany({ code: link.code })]);
   res.json({ ok: true });
+}));
+
+/* ----- Réglages ----- */
+const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const validTz = (tz) => { try { new Intl.DateTimeFormat("fr-FR", { timeZone: tz }); return true; } catch { return false; } };
+
+function settingsView(c, me) {
+  const { safeBrowsingKey, ...values } = c;
+  return {
+    values: { ...values, safeBrowsingKey: Boolean(safeBrowsingKey) }, // la clé elle-même n'est jamais renvoyée
+    fixed: {
+      me, envAdmins: ENV_ADMINS, builtinBlocked: BUILTIN_BLOCKED, baseUrl: BASE_URL,
+      secrets: { MONGODB_URI: Boolean(process.env.MONGODB_URI), JWT_SECRET: Boolean(JWT_SECRET), HASH_SALT: SALT !== "change-moi" },
+    },
+  };
+}
+
+// Valide le corps envoyé par /admin ; renvoie { values } ou { error }
+function parseSettings(b, current, adminEmail) {
+  const v = {};
+  if (typeof b.requireLogin !== "boolean") return { error: "Réglage « compte obligatoire » invalide." };
+  v.requireLogin = b.requireLogin;
+  for (const [key, min, max, label] of [
+    ["reportThreshold", 1, 100, "Seuil de signalements"],
+    ["shortenLimitAnon", 1, 1000, "Limite sans compte"],
+    ["shortenLimitUser", 1, 10000, "Limite avec compte"],
+  ]) {
+    const n = Number(b[key]);
+    if (!Number.isInteger(n) || n < min || n > max) return { error: `${label} : nombre entier entre ${min} et ${max}.` };
+    v[key] = n;
+  }
+
+  if (!Array.isArray(b.blockedDomains) || b.blockedDomains.length > 500) return { error: "Liste de domaines invalide (500 au maximum)." };
+  v.blockedDomains = [...new Set(b.blockedDomains.map((d) => String(d).trim().toLowerCase()
+    .replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/:?#].*$/, "")).filter(Boolean))];
+  const wrongDomain = v.blockedDomains.find((d) => !DOMAIN_RE.test(d));
+  if (wrongDomain) return { error: `Domaine invalide : ${wrongDomain}` };
+
+  if (!Array.isArray(b.adminEmails) || b.adminEmails.length > 50) return { error: "Liste d'administrateurs invalide (50 au maximum)." };
+  v.adminEmails = [...new Set(b.adminEmails.map((e) => String(e).trim().toLowerCase()).filter(Boolean))];
+  const wrongEmail = v.adminEmails.find((e) => e.length > 254 || !EMAIL_RE.test(e));
+  if (wrongEmail) return { error: `Email invalide : ${wrongEmail}` };
+  if (!isAdminEmail(adminEmail, v)) return { error: "Tu ne peux pas retirer ton propre accès administrateur." };
+
+  v.tzStats = String(b.tzStats || "").trim();
+  if (!validTz(v.tzStats)) return { error: "Fuseau horaire inconnu (ex. Indian/Antananarivo, Europe/Paris)." };
+
+  // Clé absente = inchangée ; chaîne vide = supprimée
+  if (b.safeBrowsingKey === undefined || b.safeBrowsingKey === null) v.safeBrowsingKey = current.safeBrowsingKey;
+  else {
+    v.safeBrowsingKey = String(b.safeBrowsingKey).trim();
+    if (v.safeBrowsingKey.length > 200 || /\s/.test(v.safeBrowsingKey)) return { error: "Clé Safe Browsing invalide." };
+  }
+  return { values: v };
+}
+
+app.get("/api/admin/settings", requireAdmin, wrap(async (req, res) => {
+  res.json(settingsView(await loadSettings(true), req.adminEmail));
+}));
+
+app.put("/api/admin/settings", requireAdmin, wrap(async (req, res) => {
+  const parsed = parseSettings(req.body || {}, await loadSettings(true), req.adminEmail);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  await Setting.updateOne({ _id: "site" }, { values: parsed.values }, { upsert: true });
+  console.warn(`Réglages modifiés par ${req.adminEmail}`);
+  res.json(settingsView(await loadSettings(true), req.adminEmail));
 }));
 
 /* ---------- Pages ---------- */

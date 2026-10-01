@@ -62,7 +62,7 @@
 
   <section class="card">
     <div class="section-head"><h2>Mes liens</h2><span id="count" class="muted small"></span></div>
-    <p id="hint" class="muted small">Sans compte, cette liste n'existe que dans ce navigateur. <button type="button" class="linklike" id="hintLogin">Crée un compte</button> pour la retrouver ailleurs.</p>
+    <p id="hint" class="muted small" hidden><span id="hintText">Sans compte, cette liste n'existe que dans ce navigateur.</span> <button type="button" class="linklike" id="hintLogin">Crée un compte</button> <span id="hintEnd">pour la retrouver ailleurs.</span></p>
     <p id="listError" class="form-error" role="alert"></p>
     <p id="empty" class="muted" hidden>Aucun lien pour l'instant.</p>
     <div id="list" class="links"></div>
@@ -137,15 +137,24 @@
   }
 
   /* ----- Compte ----- */
-  let loggedIn = false, mode = "login";
+  let loggedIn = false, mode = "login", requireLogin = false;
+  const submitLabel = () => (requireLogin && !loggedIn ? "Se connecter pour raccourcir" : "Raccourcir");
   async function refreshMe() {
     try {
-      const d = await api("/api/auth/me");
+      const [d, c] = await Promise.all([api("/api/auth/me"), api("/api/config").catch(() => ({}))]);
       loggedIn = Boolean(d.email);
+      requireLogin = Boolean(c.requireLogin);
       $("who").textContent = $("who").title = d.email || "";
       $("authBtn").textContent = loggedIn ? "Se déconnecter" : "Se connecter";
-      $("hint").hidden = loggedIn;
       $("adminLink").hidden = !d.admin;
+      // Le message dépend du réglage « compte obligatoire » défini dans /admin
+      $("hint").hidden = loggedIn;
+      $("hintText").textContent = requireLogin
+        ? "Un compte est nécessaire pour créer des liens."
+        : "Sans compte, cette liste n'existe que dans ce navigateur.";
+      $("hintLogin").textContent = requireLogin ? "Crée ton compte" : "Crée un compte";
+      $("hintEnd").textContent = requireLogin ? "ou connecte-toi pour commencer." : "pour la retrouver ailleurs.";
+      $("submit").textContent = submitLabel();
     } catch { /* la création de liens reste possible sans cette information */ }
   }
   function setMode(m) {
@@ -282,6 +291,7 @@
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("error").textContent = "";
+    if (requireLogin && !loggedIn) { openAuth("login"); return; }
     const alias = $("alias").value.trim();
     if (!$("url").value.trim()) { $("error").textContent = "Colle d'abord l'adresse à raccourcir."; $("url").focus(); return; }
     if (alias && !/^[a-zA-Z0-9_-]{3,30}$/.test(alias)) {
@@ -312,7 +322,7 @@
       $("error").textContent = err.message;
     } finally {
       $("submit").disabled = false;
-      $("submit").textContent = "Raccourcir";
+      $("submit").textContent = submitLabel();
     }
   });
 

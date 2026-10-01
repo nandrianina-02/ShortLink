@@ -17,7 +17,7 @@
   </header>
 
   <h1>Administration</h1>
-  <p id="denied" class="card notice" hidden><i data-i="alert"></i>Accès réservé aux administrateurs. <a href="/app?connexion">Connecte-toi</a> avec un compte listé dans <code>ADMIN_EMAILS</code>, puis reviens ici.</p>
+  <p id="denied" class="card notice" hidden><i data-i="alert"></i>Accès réservé aux administrateurs. <a href="/app?connexion">Connecte-toi</a> avec un compte administrateur, puis reviens ici.</p>
 
   <div id="app" hidden>
     <div class="kpis">
@@ -31,6 +31,7 @@
       <div class="tabs" role="tablist">
         <button type="button" class="ghost active" data-tab="reports" role="tab" aria-selected="true">Signalements</button>
         <button type="button" class="ghost" data-tab="all" role="tab" aria-selected="false">Tous les liens</button>
+        <button type="button" class="ghost" data-tab="settings" role="tab" aria-selected="false">Paramètres</button>
       </div>
       <div id="searchBox" hidden style="margin-bottom:16px">
         <label for="q">Rechercher un code ou un domaine</label>
@@ -38,6 +39,67 @@
       </div>
       <p id="empty" class="muted" hidden></p>
       <div id="list"></div>
+
+      <form id="settingsForm" class="settings" hidden novalidate>
+        <fieldset>
+          <legend>Accès</legend>
+          <label class="switch"><input type="checkbox" id="s-requireLogin"><span>Compte obligatoire pour créer un lien</span></label>
+          <p class="hint">Désactivé, n'importe qui peut créer des liens, dans la limite fixée ci-dessous pour les visiteurs sans compte.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Limites</legend>
+          <div class="grid3">
+            <div><label for="s-shortenLimitAnon">Liens par 15 min, sans compte</label><input id="s-shortenLimitAnon" type="number" min="1" max="1000" inputmode="numeric"></div>
+            <div><label for="s-shortenLimitUser">Liens par 15 min, avec compte</label><input id="s-shortenLimitUser" type="number" min="1" max="10000" inputmode="numeric"></div>
+            <div><label for="s-reportThreshold">Signalements avant désactivation</label><input id="s-reportThreshold" type="number" min="1" max="100" inputmode="numeric"></div>
+          </div>
+          <p class="hint">Un lien est désactivé automatiquement quand ce nombre de personnes différentes l'ont signalé.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Domaines bloqués</legend>
+          <label for="s-blockedDomains">Un domaine par ligne, ses sous-domaines sont aussi bloqués</label>
+          <textarea id="s-blockedDomains" rows="5" placeholder="site-arnaque.com" autocapitalize="off" spellcheck="false"></textarea>
+          <p class="hint">Toujours refusés (autres raccourcisseurs) : <span id="f-builtin"></span></p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Administrateurs</legend>
+          <label for="s-adminEmails">Un email par ligne. La personne doit avoir créé son compte.</label>
+          <textarea id="s-adminEmails" rows="3" placeholder="prenom.nom@exemple.fr" autocapitalize="off" spellcheck="false"></textarea>
+          <p class="hint" id="f-envAdmins"></p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Statistiques</legend>
+          <label for="s-tzStats">Fuseau horaire utilisé pour les vues par jour</label>
+          <input id="s-tzStats" list="tzList" autocomplete="off" spellcheck="false">
+          <datalist id="tzList"></datalist>
+        </fieldset>
+
+        <fieldset>
+          <legend>Google Safe Browsing</legend>
+          <p class="muted small" id="f-sbStatus" style="margin:0 0 10px"></p>
+          <label for="s-sbKey">Nouvelle clé API</label>
+          <input id="s-sbKey" type="password" autocomplete="off" placeholder="Laisser vide pour garder la clé actuelle">
+          <label class="switch" id="sbClearRow" style="margin-top:10px"><input type="checkbox" id="s-sbClear"><span>Supprimer la clé actuelle</span></label>
+          <p class="hint">Avec une clé, chaque lien est vérifié auprès de Google avant d'être raccourci. <a href="https://developers.google.com/safe-browsing/v4/get-started" target="_blank" rel="noopener">Obtenir une clé</a></p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Configuration du serveur</legend>
+          <p class="hint" style="margin:0 0 10px">Lecture seule : ces valeurs se changent dans Vercel (Settings → Environment Variables), puis en redéployant.</p>
+          <dl class="kv" id="f-server"></dl>
+        </fieldset>
+
+        <p id="settingsError" class="form-error" role="alert"></p>
+        <div class="set-actions">
+          <span class="muted small" id="dirtyNote" hidden>Modifications non enregistrées</span>
+          <button type="button" class="ghost" id="settingsReset">Annuler</button>
+          <button type="submit" id="settingsSave">Enregistrer</button>
+        </div>
+      </form>
     </section>
   </div>
 </main>
@@ -136,6 +198,7 @@
   }
 
   async function refresh() {
+    if (tab === "settings") return loadSettingsPane();
     try {
       const o = await api("/api/admin/overview");
       countTo($("k-reported"), o.reported);
@@ -161,16 +224,145 @@
     }
   }
 
-  document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => {
+  /* ----- Paramètres ----- */
+  let saved = null; // dernière version enregistrée, pour détecter les modifications
+  const lines = (id) => $(id).value.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+  const LABELS = {
+    requireLogin: "Compte obligatoire", shortenLimitAnon: "Limite sans compte", shortenLimitUser: "Limite avec compte",
+    reportThreshold: "Seuil de signalements", blockedDomains: "Domaines bloqués", adminEmails: "Administrateurs",
+    tzStats: "Fuseau horaire", safeBrowsingKey: "Clé Safe Browsing",
+  };
+
+  function readForm() {
+    const v = {
+      requireLogin: $("s-requireLogin").checked,
+      shortenLimitAnon: Number($("s-shortenLimitAnon").value),
+      shortenLimitUser: Number($("s-shortenLimitUser").value),
+      reportThreshold: Number($("s-reportThreshold").value),
+      blockedDomains: lines("s-blockedDomains"),
+      adminEmails: lines("s-adminEmails"),
+      tzStats: $("s-tzStats").value.trim(),
+    };
+    if ($("s-sbClear").checked) v.safeBrowsingKey = "";
+    else if ($("s-sbKey").value.trim()) v.safeBrowsingKey = $("s-sbKey").value.trim();
+    return v;
+  }
+
+  function changes() {
+    if (!saved) return [];
+    const v = readForm(), out = [];
+    const show = (x) => (typeof x === "boolean" ? (x ? "oui" : "non") : Array.isArray(x) ? (x.length ? plural(x.length, "entrée") : "aucune") : x);
+    for (const k of Object.keys(LABELS)) {
+      if (!(k in v)) continue;
+      if (k === "safeBrowsingKey") { out.push(v[k] ? "Clé Safe Browsing : remplacée" : "Clé Safe Browsing : supprimée"); continue; }
+      if (JSON.stringify(v[k]) !== JSON.stringify(saved.values[k])) out.push(`${LABELS[k]} : ${show(saved.values[k])} → ${show(v[k])}`);
+    }
+    return out;
+  }
+  function markDirty() {
+    const n = changes().length;
+    $("dirtyNote").hidden = !n;
+    $("settingsReset").disabled = !n;
+  }
+
+  function fillForm(d) {
+    saved = d;
+    const v = d.values, f = d.fixed;
+    $("s-requireLogin").checked = v.requireLogin;
+    $("s-shortenLimitAnon").value = v.shortenLimitAnon;
+    $("s-shortenLimitUser").value = v.shortenLimitUser;
+    $("s-reportThreshold").value = v.reportThreshold;
+    $("s-blockedDomains").value = v.blockedDomains.join("\n");
+    $("s-adminEmails").value = v.adminEmails.join("\n");
+    $("s-tzStats").value = v.tzStats;
+    $("s-sbKey").value = "";
+    $("s-sbClear").checked = false;
+    $("sbClearRow").hidden = !v.safeBrowsingKey;
+    $("f-sbStatus").textContent = v.safeBrowsingKey ? "Une clé est enregistrée : la vérification est active." : "Aucune clé : la vérification Google est désactivée.";
+    $("f-builtin").textContent = f.builtinBlocked.join(", ");
+    $("f-envAdmins").textContent = f.envAdmins.length
+      ? `Administrateurs permanents (variable ADMIN_EMAILS, non modifiables ici) : ${f.envAdmins.join(", ")}`
+      : "Aucun administrateur permanent défini dans ADMIN_EMAILS.";
+    const kv = [
+      ["Adresse du site (BASE_URL)", f.baseUrl],
+      ["Base de données (MONGODB_URI)", f.secrets.MONGODB_URI ? "définie" : "manquante"],
+      ["Secret des sessions (JWT_SECRET)", f.secrets.JWT_SECRET ? "défini" : "manquant"],
+      ["Sel d'anonymisation (HASH_SALT)", f.secrets.HASH_SALT ? "défini" : "valeur par défaut, à changer"],
+    ];
+    $("f-server").replaceChildren(...kv.flatMap(([k, val]) => [el("dt", "", k), el("dd", /manqu|défaut/.test(val) ? "bad" : "", val)]));
+    $("settingsError").textContent = "";
+    markDirty();
+  }
+
+  async function loadSettingsPane() {
+    try {
+      const o = await api("/api/admin/overview");
+      countTo($("k-reported"), o.reported); countTo($("k-disabled"), o.disabled);
+      countTo($("k-links"), o.links); countTo($("k-users"), o.users);
+      $("denied").hidden = true; $("app").hidden = false;
+      fillForm(await api("/api/admin/settings"));
+    } catch (e) {
+      if (e.message !== "denied") $("settingsError").textContent = e.message;
+    }
+  }
+
+  if (Intl.supportedValuesOf) {
+    $("tzList").replaceChildren(...Intl.supportedValuesOf("timeZone").map((z) => { const o = document.createElement("option"); o.value = z; return o; }));
+  }
+  $("settingsForm").addEventListener("input", markDirty);
+  $("settingsForm").addEventListener("change", markDirty);
+  $("s-sbClear").addEventListener("change", () => { $("s-sbKey").disabled = $("s-sbClear").checked; });
+
+  $("settingsReset").onclick = async () => {
+    if (!(await ask({ title: "Annuler les modifications ?", message: "Les champs reviennent aux valeurs enregistrées.", confirm: "Annuler les modifications", cancel: "Continuer à modifier" }))) return;
+    fillForm(saved);
+  };
+
+  $("settingsForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("settingsError").textContent = "";
+    const list = changes();
+    if (!list.length) { toast("Aucune modification à enregistrer."); return; }
+    const opening = saved.values.requireLogin && !readForm().requireLogin;
+    const ok = await ask({
+      title: "Enregistrer les paramètres ?",
+      message: list.join(" · ") + (opening ? ". Tout le monde pourra créer des liens sans compte." : ".") + " Le changement s'applique partout en moins de 30 secondes.",
+      confirm: "Enregistrer",
+      danger: opening,
+    });
+    if (!ok) return;
+    $("settingsSave").disabled = true;
+    try {
+      fillForm(await api("/api/admin/settings", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(readForm()),
+      }));
+      toast("Paramètres enregistrés.");
+    } catch (err) {
+      if (err.message !== "denied") $("settingsError").textContent = err.message;
+    } finally {
+      $("settingsSave").disabled = false;
+    }
+  });
+
+  document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = async () => {
+    if (b.dataset.tab === tab) return;
+    if (tab === "settings" && changes().length &&
+        !(await ask({ title: "Quitter sans enregistrer ?", message: "Tes modifications des paramètres seront perdues.", confirm: "Quitter sans enregistrer", cancel: "Rester", danger: true }))) return;
     tab = b.dataset.tab;
     document.querySelectorAll(".tabs button").forEach((x) => {
       x.classList.toggle("active", x === b);
       x.setAttribute("aria-selected", x === b);
     });
     $("searchBox").hidden = tab !== "all";
+    $("settingsForm").hidden = tab !== "settings";
+    $("list").hidden = tab === "settings";
+    if (tab === "settings") $("empty").hidden = true;
     firstRender = true;
     refresh();
   }));
+  // Ouvre directement un onglet via /admin#parametres
+  if (location.hash === "#parametres") document.querySelector('[data-tab="settings"]').click();
+  window.addEventListener("beforeunload", (e) => { if (tab === "settings" && changes().length) e.preventDefault(); });
   $("q").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(refresh, 300); });
 
   refresh();

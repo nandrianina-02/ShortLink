@@ -27,7 +27,7 @@
         <a class="btn primary" href="/app">Raccourcir un lien<i data-i="arrow-right"></i></a>
         <a class="btn" href="#comment">Comment ça marche</a>
       </div>
-      <p class="muted small">Un compte permet de retrouver tes liens sur tous tes appareils.</p>
+      <p class="muted small" id="accountNote">Un compte permet de retrouver tes liens sur tous tes appareils.</p>
     </div>
 
     <figure class="demo" aria-label="Exemple : une longue adresse devient un lien court avec ses statistiques">
@@ -106,6 +106,11 @@
   const $ = (id) => document.getElementById(id);
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   $("dHost").textContent = location.host;
+
+  // Le message sur le compte suit le réglage « compte obligatoire » défini dans /admin
+  fetch("/api/config").then((r) => r.json()).then((c) => {
+    if (c.requireLogin) $("accountNote").textContent = "Il faut un compte pour créer des liens ; il te permet aussi de les retrouver sur tous tes appareils.";
+  }).catch(() => {});
 
   // Personne déjà connectée : on l'envoie directement vers ses liens
   fetch("/api/auth/me").then((r) => r.json()).then((d) => {
