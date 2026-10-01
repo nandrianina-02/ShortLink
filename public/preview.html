@@ -4,47 +4,76 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Aperçu du lien</title>
+<title>Où mène ce lien ? · shortlink</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/icons.js"></script>
+<script src="/ui.js"></script>
 </head>
 <body>
 <main>
-  <h1 class="row"><i data-i="shield" data-size="28"></i>Où mène ce lien ?</h1>
+  <header class="topbar">
+    <a class="brand" href="/">short<span>link</span></a>
+    <a class="btn" href="/">Créer un lien court</a>
+  </header>
+
+  <h1>Où mène ce lien ?</h1>
+  <p class="lead">Vérifie l'adresse de destination avant d'y aller.</p>
+
   <section class="card" id="card" hidden>
-    <p class="muted" style="margin:0">Ce lien redirige vers :</p>
+    <p class="muted small" style="margin:0">Ce lien redirige vers</p>
     <p class="warn-host" id="host"></p>
-    <p class="muted" id="full" style="word-break:break-all"></p>
+    <p class="muted small" id="full" style="word-break:break-all;margin:0 0 18px"></p>
     <div class="row">
-      <a id="go" class="btn primary" href="#">Continuer<i data-i="arrow-right"></i></a>
-      <button id="report" class="ghost" type="button"><i data-i="flag"></i>Signaler ce lien</button>
+      <a id="go" class="btn primary" href="#">Continuer vers le site<i data-i="arrow-right"></i></a>
+      <button id="report" class="ghost danger" type="button"><i data-i="flag"></i>Signaler ce lien</button>
     </div>
-    <p id="msg" class="muted" role="status"></p>
   </section>
-  <p id="error" role="alert"></p>
-  <p><a class="btn" href="/"><i data-i="link"></i>Créer un lien court</a></p>
+  <p id="error" class="card notice" role="alert" hidden></p>
 </main>
 <script>
   const $ = (id) => document.getElementById(id);
-  const code = decodeURIComponent(location.pathname.split("/").pop());
+  const code = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+
   (async () => {
     try {
-      const res = await fetch("/api/preview/" + encodeURIComponent(code));
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.error);
+      let res;
+      try { res = await fetch("/api/preview/" + encodeURIComponent(code)); }
+      catch { throw new Error("Serveur injoignable. Vérifie ta connexion."); }
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Ce lien est introuvable.");
       $("host").textContent = d.host;
       $("full").textContent = d.url;
       $("go").href = "/" + encodeURIComponent(code);
       $("card").hidden = false;
-    } catch (e) { $("error").textContent = e.message || "Erreur."; }
+    } catch (e) {
+      $("error").textContent = e.message;
+      $("error").hidden = false;
+    }
   })();
+
   $("report").addEventListener("click", async () => {
-    $("report").disabled = true;
-    const res = await fetch("/api/report", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
+    const reason = await ask({
+      title: "Signaler ce lien ?",
+      message: "Utilise le signalement pour un lien d'arnaque, de virus ou de contenu illégal. Après plusieurs signalements, le lien est désactivé automatiquement.",
+      input: { label: "Motif (facultatif)", placeholder: "ex. faux site de banque" },
+      confirm: "Envoyer le signalement",
+      danger: true,
     });
-    $("msg").textContent = res.ok ? "Merci, le signalement a été enregistré." : "Signalement impossible pour le moment.";
+    if (reason === null) return;
+    $("report").disabled = true;
+    try {
+      const res = await fetch("/api/report", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, reason }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Signalement impossible pour le moment.");
+      setLabel($("report"), "check", "Signalement envoyé");
+      toast("Merci, ton signalement a été enregistré.");
+    } catch (e) {
+      $("report").disabled = false;
+      toast(e instanceof TypeError ? "Serveur injoignable, réessaie." : e.message, "err");
+    }
   });
 </script>
 </body>

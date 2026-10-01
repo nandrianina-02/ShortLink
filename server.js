@@ -143,9 +143,10 @@ const anonOwner = (req) => {
 };
 const getOwner = (req) => (req.userId ? "u:" + req.userId : anonOwner(req));
 
+const COOKIE_OPTS = { httpOnly: true, sameSite: "lax", secure: IS_PROD };
 function setSession(res, user) {
   const token = jwt.sign({ sub: String(user._id) }, JWT_SECRET, { expiresIn: "30d" });
-  res.cookie("token", token, { httpOnly: true, sameSite: "lax", secure: IS_PROD, maxAge: 30 * DAY });
+  res.cookie("token", token, { ...COOKIE_OPTS, maxAge: 30 * DAY });
 }
 async function adoptAnonLinks(req, user) {
   const anon = anonOwner(req);
@@ -189,11 +190,11 @@ app.post("/api/auth/login", authLimiter, wrap(async (req, res) => {
   res.json({ email });
 }));
 
-app.post("/api/auth/logout", (req, res) => { res.clearCookie("token"); res.json({ ok: true }); });
+app.post("/api/auth/logout", (req, res) => { res.clearCookie("token", COOKIE_OPTS); res.json({ ok: true }); });
 
 app.get("/api/auth/me", wrap(async (req, res) => {
   const user = req.userId ? await User.findById(req.userId).select("email").lean() : null;
-  if (req.userId && !user) res.clearCookie("token");
+  if (req.userId && !user) res.clearCookie("token", COOKIE_OPTS);
   res.json({ email: user ? user.email : null, admin: Boolean(user && ADMINS.includes(user.email)) });
 }));
 
@@ -404,7 +405,11 @@ app.get("/:code", wrap(async (req, res) => {
   res.redirect(302, link.url);
 }));
 
+app.use("/api", (req, res) => res.status(404).json({ error: "Route inconnue." }));
+
 app.use((err, req, res, next) => {
+  if (err.type === "entity.parse.failed") return res.status(400).json({ error: "Requête invalide." });
+  if (err.type === "entity.too.large") return res.status(413).json({ error: "Requête trop volumineuse." });
   console.error(err);
   res.status(500).json({ error: "Erreur serveur." });
 });

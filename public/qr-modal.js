@@ -1,17 +1,18 @@
 /* Fenêtre QR code : génère, affiche, puis propose partage, copie et téléchargement.
-   Utilisation : openQr(code, shortUrl). Nécessite icons.js. */
+   Utilisation : openQr(code, shortUrl). Nécessite icons.js et ui.js. */
 (function () {
   var dlg, st = {};
 
   var HTML =
     '<div class="qr-body">' +
       '<div class="qr-head">' +
-        '<h2><i data-i="qr-code"></i>QR code</h2>' +
-        '<button type="button" class="ghost" data-act="close" aria-label="Fermer"><i data-i="x"></i></button>' +
+        '<h2>QR code</h2>' +
+        '<button type="button" class="ghost icon-btn" data-act="close" aria-label="Fermer"><i data-i="x"></i></button>' +
       '</div>' +
       '<div class="qr-stage">' +
         '<div class="spinner" data-role="spin" role="status" aria-label="Génération du QR code"></div>' +
         '<img data-role="img" alt="QR code du lien" width="230" height="230" hidden>' +
+        '<p data-role="fail" class="qr-fail" hidden>QR code indisponible</p>' +
       '</div>' +
       '<div class="qr-url" data-role="url"></div>' +
       '<div class="qr-actions">' +
@@ -22,7 +23,7 @@
         '<a class="btn" data-role="svg" href="#"><i data-i="download"></i>SVG</a>' +
       '</div>' +
       '<div class="qr-social">' +
-        '<span class="muted">Envoyer par</span>' +
+        '<span class="muted">Envoyer le lien par</span>' +
         '<a class="btn" data-net="whatsapp" target="_blank" rel="noopener"><i data-i="message"></i>WhatsApp</a>' +
         '<a class="btn" data-net="telegram" target="_blank" rel="noopener"><i data-i="message"></i>Telegram</a>' +
         '<a class="btn" data-net="facebook" target="_blank" rel="noopener"><i data-i="external"></i>Facebook</a>' +
@@ -70,7 +71,7 @@
       if (act === "close") return dlg.close();
 
       if (act === "copy-link") {
-        try { await navigator.clipboard.writeText(st.shortUrl); flash(btn, "check", "Lien copié"); }
+        try { await window.copyText(st.shortUrl); flash(btn, "check", "Lien copié"); }
         catch (err) { msg("Copie impossible sur ce navigateur."); }
         return;
       }
@@ -97,6 +98,7 @@
     if (!dlg) build();
     release();
     st = { code: code, shortUrl: shortUrl };
+    dlg.setAttribute("aria-label", "QR code");
 
     var enc = encodeURIComponent(shortUrl);
     role("url").textContent = shortUrl.replace(/^https?:\/\//, "");
@@ -109,6 +111,7 @@
     // État "génération en cours"
     role("img").hidden = true;
     role("spin").hidden = false;
+    role("fail").hidden = true;
     msg("");
     dlg.querySelectorAll("[data-blob]").forEach(function (b) { b.setAttribute("aria-disabled", "true"); b.disabled = true; });
     if (!dlg.open) dlg.showModal();
@@ -129,6 +132,7 @@
       dlg.querySelectorAll("[data-blob]").forEach(function (b) { b.removeAttribute("aria-disabled"); b.disabled = false; });
     } catch (err) {
       role("spin").hidden = true;
+      role("fail").hidden = false;
       msg("Impossible de générer le QR code. Réessaie dans un instant.");
     }
   };

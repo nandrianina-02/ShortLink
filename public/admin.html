@@ -4,32 +4,37 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Administration</title>
+<title>Administration · shortlink</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/icons.js"></script>
+<script src="/ui.js"></script>
 </head>
 <body>
 <main>
-  <p><a class="btn" href="/"><i data-i="arrow-left"></i>Retour</a></p>
-  <h1 class="row"><i data-i="shield" data-size="28"></i>Administration</h1>
-  <p id="denied" class="card" hidden><i data-i="alert"></i>Accès réservé aux administrateurs. Connecte-toi avec un compte listé dans <code>ADMIN_EMAILS</code> depuis la <a href="/">page d'accueil</a>, puis reviens ici.</p>
+  <header class="topbar">
+    <a class="brand" href="/">short<span>link</span></a>
+    <a class="back" href="/"><i data-i="arrow-left"></i>Retour à l'accueil</a>
+  </header>
+
+  <h1>Administration</h1>
+  <p id="denied" class="card notice" hidden><i data-i="alert"></i>Accès réservé aux administrateurs. Connecte-toi depuis la <a href="/">page d'accueil</a> avec un compte listé dans <code>ADMIN_EMAILS</code>, puis reviens ici.</p>
 
   <div id="app" hidden>
     <div class="kpis">
-      <div class="kpi"><i data-i="flag" data-size="22"></i><b id="k-reported">0</b><span>Liens signalés</span></div>
-      <div class="kpi"><i data-i="ban" data-size="22"></i><b id="k-disabled">0</b><span>Liens désactivés</span></div>
-      <div class="kpi"><i data-i="link" data-size="22"></i><b id="k-links">0</b><span>Liens au total</span></div>
-      <div class="kpi"><i data-i="users" data-size="22"></i><b id="k-users">0</b><span>Comptes</span></div>
+      <div class="kpi"><b id="k-reported">0</b><span>liens signalés</span></div>
+      <div class="kpi"><b id="k-disabled">0</b><span>liens désactivés</span></div>
+      <div class="kpi"><b id="k-links">0</b><span>liens au total</span></div>
+      <div class="kpi"><b id="k-users">0</b><span>comptes</span></div>
     </div>
 
     <section class="card">
-      <div class="tabs wide">
-        <button type="button" class="ghost active" data-tab="reports"><i data-i="flag"></i>Signalements</button>
-        <button type="button" class="ghost" data-tab="all"><i data-i="list"></i>Tous les liens</button>
+      <div class="tabs" role="tablist">
+        <button type="button" class="ghost active" data-tab="reports" role="tab" aria-selected="true">Signalements</button>
+        <button type="button" class="ghost" data-tab="all" role="tab" aria-selected="false">Tous les liens</button>
       </div>
-      <div id="searchBox" hidden style="margin-bottom:12px">
-        <label for="q" class="badge-i"><i data-i="search"></i>Rechercher un code ou un domaine</label>
-        <input id="q" type="search" placeholder="ex. exemple.com ou mon-lien" autocomplete="off">
+      <div id="searchBox" hidden style="margin-bottom:16px">
+        <label for="q">Rechercher un code ou un domaine</label>
+        <input id="q" type="search" placeholder="ex. exemple.com ou mon-lien" autocomplete="off" autocapitalize="off" spellcheck="false">
       </div>
       <p id="empty" class="muted" hidden></p>
       <div id="list"></div>
@@ -40,7 +45,8 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const fmt = (d) => new Date(d).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
-  let tab = "reports", timer;
+  const plural = (n, word) => `${n} ${word}${n > 1 ? "s" : ""}`;
+  let tab = "reports", timer, firstRender = true;
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -50,60 +56,81 @@
   }
 
   async function api(url, opts) {
-    const res = await fetch(url, opts);
+    let res;
+    try { res = await fetch(url, opts); }
+    catch { throw new Error("Serveur injoignable. Vérifie ta connexion."); }
     const data = await res.json().catch(() => ({}));
     if (res.status === 403 || res.status === 401) { $("app").hidden = true; $("denied").hidden = false; throw new Error("denied"); }
-    if (!res.ok) throw new Error(data.error || "Erreur");
+    if (!res.ok) throw new Error(data.error || "Une erreur est survenue.");
     return data;
   }
 
-  async function act(code, action) {
-    await api(`/api/admin/links/${encodeURIComponent(code)}/${action}`, { method: "POST" });
-    refresh();
+  const ACTIONS = {
+    disable: {
+      ask: (l) => ({ title: `Désactiver /${l.code} ?`, message: `Les visiteurs verront une page « lien indisponible » au lieu d'arriver sur ${l.host}. Tu pourras le réactiver plus tard.`, confirm: "Désactiver", danger: true }),
+      done: "Lien désactivé.",
+    },
+    enable: { done: "Lien réactivé, signalements effacés." },
+    dismiss: {
+      ask: (l) => ({ title: "Ignorer les signalements ?", message: `Les ${plural(l.reports, "signalement")} de /${l.code} seront effacés. Le lien reste actif.`, confirm: "Ignorer" }),
+      done: "Signalements ignorés.",
+    },
+    delete: {
+      ask: (l) => ({ title: `Supprimer /${l.code} ?`, message: `Le lien, ses ${plural(l.clicks, "vue")} et ses signalements seront définitivement effacés.`, confirm: "Supprimer définitivement", danger: true }),
+      done: "Lien supprimé.",
+    },
+  };
+
+  async function act(l, action, btn) {
+    const a = ACTIONS[action];
+    if (a.ask && !(await ask(a.ask(l)))) return;
+    btn.disabled = true;
+    try {
+      if (action === "delete") await api("/api/admin/links/" + encodeURIComponent(l.code), { method: "DELETE" });
+      else await api(`/api/admin/links/${encodeURIComponent(l.code)}/${action}`, { method: "POST" });
+      if (action === "delete") await animateOut(btn.closest(".adm-row"));
+      toast(a.done);
+      refresh();
+    } catch (e) {
+      btn.disabled = false;
+      if (e.message !== "denied") toast(e.message, "err");
+    }
   }
 
-  function button(label, ic, onclick, cls = "ghost") {
+  function button(l, action, label, ic, cls = "ghost") {
     const b = iconEl("button", cls, ic, label);
     b.type = "button";
-    b.onclick = onclick;
+    b.onclick = () => act(l, action, b);
     return b;
   }
 
   function row(l) {
     const box = el("div", "adm-row");
 
-    const head = el("div", "row");
+    const head = el("div", "adm-head");
     const a = el("a", "short", location.host + "/" + l.code);
     a.href = "/p/" + encodeURIComponent(l.code); // page d'aperçu, ne compte pas de vue
     a.target = "_blank"; a.rel = "noopener";
     head.append(a);
-    if (l.reports) head.append(iconEl("span", "pill bad", "flag", `${l.reports} signalement${l.reports > 1 ? "s" : ""}`));
+    if (l.reports) head.append(iconEl("span", "pill bad", "flag", plural(l.reports, "signalement")));
     if (l.disabled) head.append(iconEl("span", "pill bad", "ban", "Désactivé"));
-    head.append(iconEl("span", "pill", l.hasAccount ? "user" : "globe", l.hasAccount ? "Compte" : "Anonyme"));
+    head.append(el("span", "pill", l.hasAccount ? "Compte" : "Anonyme"));
 
     // Destination affichée en texte (non cliquable) pour éviter d'ouvrir un site dangereux par erreur
     const dest = el("div", "adm-url");
-    dest.append(el("span", "adm-host", l.host), document.createTextNode("  " + l.url));
+    dest.append(el("span", "adm-host", l.host), document.createTextNode(l.url));
 
-    const meta = el("div", "row badge");
-    meta.append(
-      iconEl("span", "badge-i", "eye", `${l.clicks} vue${l.clicks > 1 ? "s" : ""}`),
-      iconEl("span", "badge-i", "calendar", `Créé le ${fmt(l.createdAt)}`));
-    if (l.lastReport) meta.append(iconEl("span", "badge-i", "flag", `Dernier signalement le ${fmt(l.lastReport)}`));
-
-    box.append(head, dest, meta);
+    const meta = [plural(l.clicks, "vue"), "créé le " + fmt(l.createdAt)];
+    if (l.lastReport) meta.push("dernier signalement le " + fmt(l.lastReport));
+    box.append(head, dest, el("div", "badge", meta.join(" · ")));
     if (l.reasons && l.reasons.length) box.append(el("div", "badge", "Motifs : " + l.reasons.join(" / ")));
 
-    const actions = el("div", "row");
+    const actions = el("div", "adm-actions");
     actions.append(l.disabled
-      ? button("Réactiver", "undo", () => act(l.code, "enable"))
-      : button("Désactiver", "ban", () => act(l.code, "disable")));
-    if (l.reports) actions.append(button("Ignorer les signalements", "x", () => act(l.code, "dismiss")));
-    actions.append(button("Supprimer", "trash", async () => {
-      if (!confirm(`Supprimer /${l.code} et toutes ses statistiques ?`)) return;
-      await api("/api/admin/links/" + encodeURIComponent(l.code), { method: "DELETE" });
-      refresh();
-    }, "ghost danger"));
+      ? button(l, "enable", "Réactiver", "undo")
+      : button(l, "disable", "Désactiver", "ban"));
+    if (l.reports) actions.append(button(l, "dismiss", "Ignorer les signalements", "x"));
+    actions.append(button(l, "delete", "Supprimer", "trash", "ghost danger"));
     box.append(actions);
     return box;
   }
@@ -111,24 +138,37 @@
   async function refresh() {
     try {
       const o = await api("/api/admin/overview");
-      $("k-reported").textContent = o.reported;
-      $("k-disabled").textContent = o.disabled;
-      $("k-links").textContent = o.links;
-      $("k-users").textContent = o.users;
+      countTo($("k-reported"), o.reported);
+      countTo($("k-disabled"), o.disabled);
+      countTo($("k-links"), o.links);
+      countTo($("k-users"), o.users);
       $("denied").hidden = true; $("app").hidden = false;
 
       const url = tab === "reports" ? "/api/admin/reports" : "/api/admin/links?q=" + encodeURIComponent($("q").value);
       const rows = await api(url);
-      $("list").replaceChildren(...rows.map(row));
+      $("list").replaceChildren(...rows.map((l, i) => {
+        const node = row(l);
+        if (firstRender) { node.classList.add("enter"); node.style.setProperty("--i", Math.min(i, 10)); }
+        return node;
+      }));
+      firstRender = false;
       $("empty").hidden = rows.length > 0;
       $("empty").textContent = tab === "reports" ? "Aucun lien signalé pour l'instant." : "Aucun lien trouvé.";
-    } catch (e) { if (e.message !== "denied") $("empty").textContent = e.message; }
+    } catch (e) {
+      if (e.message === "denied") return;
+      $("empty").textContent = e.message;
+      $("empty").hidden = false;
+    }
   }
 
   document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => {
     tab = b.dataset.tab;
-    document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
+    document.querySelectorAll(".tabs button").forEach((x) => {
+      x.classList.toggle("active", x === b);
+      x.setAttribute("aria-selected", x === b);
+    });
     $("searchBox").hidden = tab !== "all";
+    firstRender = true;
     refresh();
   }));
   $("q").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(refresh, 300); });
