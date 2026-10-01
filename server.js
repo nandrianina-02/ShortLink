@@ -22,12 +22,19 @@ const ADMINS = (process.env.ADMIN_EMAILS || "").split(",").map((e) => e.trim().t
 const REPORT_THRESHOLD = 3; // signalements distincts avant désactivation automatique
 const DAY = 864e5;
 
-if (!JWT_SECRET) { console.error("JWT_SECRET manquant dans .env"); process.exit(1); }
+if (!JWT_SECRET) throw new Error("JWT_SECRET manquant (fichier .env ou variables d'environnement)");
 
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "10kb" }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
+
+/* Connexion MongoDB ouverte au premier appel puis réutilisée (nécessaire sur Vercel, où le serveur ne tourne pas en continu) */
+let dbReady = null;
+const connectDB = () => (dbReady ||= mongoose
+  .connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 8000 })
+  .catch((e) => { dbReady = null; throw e; }));
+app.use((req, res, next) => connectDB().then(() => next(), next));
 
 /* ---------- Modèles ---------- */
 const User = mongoose.model("User", new mongoose.Schema(
@@ -415,7 +422,11 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Erreur serveur." });
 });
 
-mongoose
-  .connect(process.env.MONGODB_URI)
-  .then(() => app.listen(PORT, () => console.log(`http://localhost:${PORT}`)))
-  .catch((err) => { console.error("MongoDB :", err.message); process.exit(1); });
+// En local (node server.js) on démarre le serveur ; sur Vercel, api/index.js importe simplement l'application
+if (require.main === module) {
+  connectDB()
+    .then(() => app.listen(PORT, () => console.log(`http://localhost:${PORT}`)))
+    .catch((err) => { console.error("MongoDB :", err.message); process.exit(1); });
+}
+
+module.exports = app;
