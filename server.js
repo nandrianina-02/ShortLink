@@ -63,7 +63,7 @@ const Report = mongoose.model("Report", new mongoose.Schema({
 /* ---------- Utilitaires ---------- */
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const RESERVED = new Set(["api", "stats", "p", "admin", "admin.html", "index", "index.html", "stats.html", "preview.html", "404.html", "style.css", "favicon.ico"]);
+const RESERVED = new Set(["api", "app", "app.html", "stats", "p", "admin", "admin.html", "index", "index.html", "stats.html", "preview.html", "404.html", "style.css", "favicon.ico"]);
 const randomCode = (len = 6) => Array.from(crypto.randomBytes(len), (b) => ALPHABET[b % ALPHABET.length]).join("");
 const sha = (s) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);
 const dayKey = (t) => new Date(t).toLocaleDateString("sv-SE", { timeZone: TZ });
@@ -384,6 +384,7 @@ app.delete("/api/admin/links/:code", requireAdmin, wrap(async (req, res) => {
 }));
 
 /* ---------- Pages ---------- */
+app.get("/app", (req, res) => res.sendFile(path.join(__dirname, "public", "app.html")));
 app.get("/admin", (req, res) => res.sendFile(path.join(__dirname, "public", "admin.html")));
 app.get("/stats/:code", (req, res) => res.sendFile(path.join(__dirname, "public", "stats.html")));
 app.get("/p/:code", (req, res) => res.sendFile(path.join(__dirname, "public", "preview.html")));

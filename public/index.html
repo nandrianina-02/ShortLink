@@ -3,322 +3,176 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>shortlink · raccourcir un lien</title>
-<meta name="description" content="Raccourcir un lien, le partager en QR code et suivre ses visites.">
+<title>shortlink · des liens courts que tu peux suivre</title>
+<meta name="description" content="Raccourcis un lien, donne-lui un nom lisible, partage-le en QR code et suis ses visites : sources, pays, appareils.">
 <link rel="stylesheet" href="/style.css">
+<script>document.documentElement.classList.add("js")</script>
 <script src="/icons.js"></script>
-<script src="/ui.js"></script>
-<script src="/qr-modal.js"></script>
 </head>
 <body>
-<main>
+<main class="wide">
   <header class="topbar">
     <a class="brand" href="/">short<span>link</span></a>
     <div class="right">
-      <span class="who" id="who"></span>
-      <a id="adminLink" class="btn" href="/admin" hidden>Admin</a>
-      <button id="authBtn" class="ghost" type="button">Se connecter</button>
+      <a id="loginLink" class="back" href="/app?connexion">Se connecter</a>
+      <a id="openApp" class="btn primary" href="/app">Créer un lien</a>
     </div>
   </header>
 
-  <h1>Raccourcir un lien</h1>
-  <p class="lead">Colle une adresse, donne-lui un nom si tu veux, puis suis les visites depuis sa page de stats.</p>
-
-  <form id="form" class="card" novalidate>
+  <section class="hero">
     <div>
-      <label for="url">Adresse à raccourcir</label>
-      <input id="url" type="text" inputmode="url" placeholder="https://exemple.com/un-tres-long-lien" autocomplete="off" autocapitalize="off" spellcheck="false">
-    </div>
-    <div class="grid2">
-      <div>
-        <label for="alias">Nom personnalisé <span class="opt">(facultatif)</span></label>
-        <div class="alias"><span id="base"></span><input id="alias" placeholder="mon-lien" maxlength="30" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="aliasHint"></div>
-        <p class="hint" id="aliasHint">3 à 30 caractères : lettres, chiffres, - et _</p>
+      <h1>Des liens courts que tu peux suivre.</h1>
+      <p class="lead">Transforme une adresse interminable en lien lisible, partage-la en QR code, puis regarde d'où viennent les visites.</p>
+      <div class="row hero-cta">
+        <a class="btn primary" href="/app">Raccourcir un lien<i data-i="arrow-right"></i></a>
+        <a class="btn" href="#comment">Comment ça marche</a>
       </div>
-      <div>
-        <label for="exp">Expiration</label>
-        <select id="exp">
-          <option value="">Jamais</option>
-          <option value="1">Dans 1 jour</option>
-          <option value="7">Dans 7 jours</option>
-          <option value="30">Dans 30 jours</option>
-        </select>
-      </div>
+      <p class="muted small">Un compte permet de retrouver tes liens sur tous tes appareils.</p>
     </div>
-    <p id="error" role="alert"></p>
-    <div><button id="submit" type="submit">Raccourcir</button></div>
-  </form>
 
-  <section id="result" class="card result" hidden aria-live="polite">
-    <p class="result-label">Lien créé</p>
-    <a id="short" class="result-url" href="#" target="_blank" rel="noopener"></a>
-    <div id="resultDest" class="dest"></div>
-    <div class="row">
-      <button id="copy" type="button"><i data-i="copy"></i>Copier</button>
-      <button id="qrBtn" type="button" class="ghost"><i data-i="qr-code"></i>QR code</button>
-      <a id="statsLink" class="btn" href="#"><i data-i="bar-chart"></i>Statistiques</a>
+    <figure class="demo" aria-label="Exemple : une longue adresse devient un lien court avec ses statistiques">
+      <div class="demo-row">
+        <span class="demo-label">Avant</span>
+        <code class="demo-long" id="dLong">https://docs.google.com/forms/d/e/1FAIpQLSc8xQm4tRvB/viewform?usp=sf_link</code>
+      </div>
+      <div class="demo-row">
+        <span class="demo-label">Après</span>
+        <code class="demo-short"><span id="dHost"></span>/<b id="dCode">inscription</b><i class="caret" aria-hidden="true"></i></code>
+      </div>
+      <div class="demo-stats">
+        <div><b id="dViews">128</b><span>vues</span></div>
+        <div class="demo-bars" id="dBars" aria-hidden="true"></div>
+      </div>
+      <div class="demo-split" id="dSplit"></div>
+    </figure>
+  </section>
+
+  <section class="reveal" id="fonctions">
+    <h2 class="section-title">Ce que tu peux faire</h2>
+    <div class="features">
+      <article>
+        <h3>Un nom qui se lit</h3>
+        <p><code class="host-ex">/portes-ouvertes</code> se retient et se dicte. Si tu n'en choisis pas, un code court est généré.</p>
+      </article>
+      <article>
+        <h3>Un QR code prêt à imprimer</h3>
+        <p>En PNG ou en SVG pour une affiche, ou envoyé directement par WhatsApp, Telegram, Facebook ou e-mail.</p>
+      </article>
+      <article>
+        <h3>Des statistiques utiles</h3>
+        <p>Vues par jour, visiteurs uniques, sources, pays, appareils, navigateurs et dernières visites.</p>
+      </article>
+      <article>
+        <h3>Une date d'expiration</h3>
+        <p>Pour une inscription ou une offre limitée : le lien s'arrête seul après 1, 7 ou 30 jours.</p>
+      </article>
+      <article>
+        <h3>Un aperçu avant de cliquer</h3>
+        <p>Ajoute <code>/p/</code> devant le code pour voir la destination. Un lien douteux peut y être signalé.</p>
+      </article>
+      <article>
+        <h3>Des abus bloqués</h3>
+        <p>Les liens signalés plusieurs fois sont désactivés automatiquement, et les autres raccourcisseurs sont refusés.</p>
+      </article>
     </div>
   </section>
 
-  <section class="card">
-    <div class="section-head"><h2>Mes liens</h2><span id="count" class="muted small"></span></div>
-    <p id="hint" class="muted small">Sans compte, cette liste n'existe que dans ce navigateur. <button type="button" class="linklike" id="hintLogin">Crée un compte</button> pour la retrouver ailleurs.</p>
-    <p id="listError" class="form-error" role="alert"></p>
-    <p id="empty" class="muted" hidden>Aucun lien pour l'instant.</p>
-    <div id="list" class="links"></div>
+  <section class="reveal" id="comment">
+    <h2 class="section-title">Comment ça marche</h2>
+    <ol class="steps">
+      <li><b>Colle l'adresse</b><span>Celle que tu veux partager, même très longue.</span></li>
+      <li><b>Choisis un nom</b><span>Facultatif, comme la date d'expiration.</span></li>
+      <li><b>Partage et suis</b><span>Copie le lien ou le QR code, les visites s'affichent dans ses stats.</span></li>
+    </ol>
   </section>
+
+  <section class="reveal privacy card">
+    <h2>Les visiteurs restent anonymes</h2>
+    <p class="muted">Pour compter les visiteurs uniques, on garde une empreinte hachée : ni adresse IP, ni cookie de suivi. Les robots et les aperçus générés par les messageries ne sont pas comptés, donc les chiffres reflètent de vraies personnes.</p>
+  </section>
+
+  <section class="reveal cta-band">
+    <h2>Prêt à raccourcir ton premier lien ?</h2>
+    <a class="btn primary" href="/app">Ouvrir shortlink<i data-i="arrow-right"></i></a>
+  </section>
+
+  <footer class="foot">
+    <span class="brand">short<span>link</span></span>
+    <span class="muted small">Un lien te paraît suspect ? Ouvre <code>/p/</code> suivi de son code avant de cliquer.</span>
+  </footer>
 </main>
-
-<dialog id="dlg" aria-labelledby="dlgTitle">
-  <div class="dlg-body">
-    <div class="dlg-head">
-      <h2 id="dlgTitle">Connexion</h2>
-      <button type="button" class="ghost icon-btn" id="authClose" aria-label="Fermer"><i data-i="x"></i></button>
-    </div>
-    <div class="tabs" role="tablist">
-      <button type="button" class="ghost active" data-mode="login" role="tab" aria-selected="true">J'ai un compte</button>
-      <button type="button" class="ghost" data-mode="register" role="tab" aria-selected="false">Nouveau compte</button>
-    </div>
-    <form id="authForm">
-      <div><label for="email">Email</label><input id="email" type="email" required autocomplete="email" autocapitalize="off" spellcheck="false"></div>
-      <div>
-        <label for="password">Mot de passe</label>
-        <input id="password" type="password" required minlength="8" maxlength="72" autocomplete="current-password">
-        <p class="hint" id="pwHint" hidden>8 caractères minimum</p>
-      </div>
-      <p id="authError" class="form-error" role="alert"></p>
-      <div class="dlg-actions">
-        <button type="button" class="ghost" id="authCancel">Annuler</button>
-        <button id="authSubmit" type="submit">Se connecter</button>
-      </div>
-    </form>
-  </div>
-</dialog>
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const fmt = (d) => new Date(d).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
-  const bare = (u) => u.replace(/^https?:\/\//, "");
-  const plural = (n, word) => `${n} ${word}${n > 1 ? "s" : ""}`;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  $("dHost").textContent = location.host;
 
-  function getOwner() {
-    try {
-      let o = localStorage.getItem("owner");
-      if (!o) { o = crypto.randomUUID(); localStorage.setItem("owner", o); }
-      return o;
-    } catch { return "session-" + Math.random().toString(36).slice(2, 20); }
-  }
-  const headers = { "Content-Type": "application/json", "x-owner": getOwner() };
-  $("base").textContent = location.host + "/";
+  // Personne déjà connectée : on l'envoie directement vers ses liens
+  fetch("/api/auth/me").then((r) => r.json()).then((d) => {
+    if (!d.email) return;
+    $("loginLink").hidden = true;
+    $("openApp").textContent = "Mes liens";
+  }).catch(() => {});
 
-  async function api(url, opts = {}) {
-    let res;
-    try { res = await fetch(url, { headers, ...opts }); }
-    catch { throw new Error("Serveur injoignable. Vérifie ta connexion puis réessaie."); }
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { const e = new Error(data.error || "Une erreur est survenue."); e.status = res.status; throw e; }
-    return data;
-  }
+  /* ----- Apparition des sections au défilement ----- */
+  const io = "IntersectionObserver" in window && new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }, { rootMargin: "0px 0px -10% 0px" });
+  document.querySelectorAll(".reveal").forEach((s) => (io ? io.observe(s) : s.classList.add("in")));
 
-  function el(tag, cls, text) {
-    const e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text !== undefined) e.textContent = text;
-    return e;
-  }
+  /* ----- Démonstration ----- */
+  const EXAMPLES = [
+    { long: "https://docs.google.com/forms/d/e/1FAIpQLSc8xQm4tRvB/viewform?usp=sf_link", code: "inscription", views: 128,
+      split: ["facebook.com 46 %", "Direct 31 %", "mail.google.com 23 %"] },
+    { long: "https://www.exemple.fr/evenements/2026/journee-portes-ouvertes?ref=affiche-hall", code: "portes-ouvertes", views: 342,
+      split: ["Direct 58 %", "Mobile 81 %", "MG 74 %"] },
+    { long: "https://drive.google.com/file/d/1aZ7kP0qLw3XvN9s/view?usp=sharing", code: "programme", views: 57,
+      split: ["mail.google.com 62 %", "Ordinateur 55 %", "FR 40 %"] },
+  ];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  async function copy(text, btn) {
-    const old = btn.innerHTML;
-    try { await copyText(text); }
-    catch { toast("Copie impossible : sélectionne le lien à la main.", "err"); return; }
-    setLabel(btn, "check", "Copié");
-    btn.classList.add("ic-pop");
-    setTimeout(() => { btn.innerHTML = old; btn.classList.remove("ic-pop"); }, 1500);
-  }
-
-  /* ----- Compte ----- */
-  let loggedIn = false, mode = "login";
-  async function refreshMe() {
-    try {
-      const d = await api("/api/auth/me");
-      loggedIn = Boolean(d.email);
-      $("who").textContent = $("who").title = d.email || "";
-      $("authBtn").textContent = loggedIn ? "Se déconnecter" : "Se connecter";
-      $("hint").hidden = loggedIn;
-      $("adminLink").hidden = !d.admin;
-    } catch { /* la création de liens reste possible sans cette information */ }
-  }
-  function setMode(m) {
-    mode = m;
-    document.querySelectorAll("#dlg .tabs button").forEach((b) => {
-      const on = b.dataset.mode === m;
-      b.classList.toggle("active", on);
-      b.setAttribute("aria-selected", on);
-    });
-    $("dlgTitle").textContent = m === "login" ? "Connexion" : "Créer un compte";
-    $("authSubmit").textContent = m === "login" ? "Se connecter" : "Créer mon compte";
-    $("password").autocomplete = m === "login" ? "current-password" : "new-password";
-    $("pwHint").hidden = m === "login";
-    $("authError").textContent = "";
-  }
-  function openAuth(m) {
-    $("authForm").reset();
-    setMode(m);
-    if (!$("dlg").open) $("dlg").showModal();
-    $("email").focus();
-  }
-  document.querySelectorAll("#dlg .tabs button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
-  $("authClose").onclick = $("authCancel").onclick = () => $("dlg").close();
-  $("dlg").addEventListener("click", (e) => { if (e.target === $("dlg")) $("dlg").close(); });
-  $("hintLogin").onclick = () => openAuth("register");
-
-  $("authBtn").onclick = async () => {
-    if (!loggedIn) return openAuth("login");
-    const ok = await ask({
-      title: "Se déconnecter ?",
-      message: "Tes liens restent enregistrés sur ton compte. Ils réapparaîtront à ta prochaine connexion.",
-      confirm: "Se déconnecter",
-    });
-    if (!ok) return;
-    try { await api("/api/auth/logout", { method: "POST" }); }
-    catch (e) { toast(e.message, "err"); return; }
-    $("result").hidden = true;
-    await refreshMe();
-    loadList();
-    toast("Déconnexion effectuée.");
-  };
-
-  $("authForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    $("authError").textContent = "";
-    $("authSubmit").disabled = true;
-    try {
-      await api("/api/auth/" + mode, {
-        method: "POST",
-        body: JSON.stringify({ email: $("email").value, password: $("password").value }),
-      });
-      $("dlg").close();
-      toast(mode === "login" ? "Connexion réussie." : "Compte créé. Tes liens y sont rattachés.");
-      await refreshMe();
-      loadList();
-    } catch (err) {
-      $("authError").textContent = err.message;
-    } finally {
-      $("authSubmit").disabled = false;
-    }
-  });
-
-  /* ----- Liste ----- */
-  const seen = new Set(); // codes déjà affichés : seuls les nouveaux liens jouent l'animation d'entrée
-  async function loadList() {
-    let links;
-    try { links = await api("/api/my-links"); }
-    catch (e) { $("listError").textContent = e.message; $("list").replaceChildren(); return; }
-    $("listError").textContent = "";
-    $("empty").hidden = links.length > 0;
-    $("count").textContent = links.length ? plural(links.length, "lien") : "";
-    let n = 0;
-    $("list").replaceChildren(...links.map((l) => {
-      const node = item(l);
-      if (!seen.has(l.code)) { node.classList.add("enter"); node.style.setProperty("--i", Math.min(n++, 10)); seen.add(l.code); }
-      return node;
-    }));
-  }
-
-  function item(l) {
-    const expired = Boolean(l.expiresAt && new Date(l.expiresAt) < new Date());
-    const box = el("div", "link-item" + (expired || l.disabled ? " is-off" : ""));
-
-    const main = el("div", "li-main");
-    const a = el("a", "short", bare(l.shortUrl));
-    a.href = l.shortUrl; a.target = "_blank"; a.rel = "noopener";
-    const dest = el("div", "dest", l.url);
-    dest.title = l.url;
-    const parts = [plural(l.clicks, "vue"), "créé le " + fmt(l.createdAt)];
-    if (l.expiresAt) parts.push((expired ? "expiré le " : "expire le ") + fmt(l.expiresAt));
-    main.append(a, dest, el("div", "meta", parts.join(" · ")));
-    if (l.disabled) main.append(iconEl("div", "tag", "ban", "Désactivé après plusieurs signalements"));
-
-    const actions = el("div", "li-actions");
-    const bCopy = iconEl("button", "ghost", "copy", "Copier");
-    bCopy.type = "button";
-    bCopy.onclick = () => copy(l.shortUrl, bCopy);
-    const bQr = iconEl("button", "ghost", "qr-code", "QR");
-    bQr.type = "button";
-    bQr.onclick = () => openQr(l.code, l.shortUrl);
-    const bStats = iconEl("a", "btn", "bar-chart", "Stats");
-    bStats.href = "/stats/" + encodeURIComponent(l.code);
-    const bDel = iconEl("button", "ghost danger", "trash", "Supprimer");
-    bDel.type = "button";
-    bDel.onclick = () => remove(l, bDel);
-    actions.append(bCopy, bQr, bStats, bDel);
-
-    box.append(main, actions);
-    return box;
-  }
-
-  async function remove(l, btn) {
-    const ok = await ask({
-      title: "Supprimer ce lien ?",
-      message: `${bare(l.shortUrl)} ne fonctionnera plus et ses statistiques (${plural(l.clicks, "vue")}) seront effacées. Impossible de revenir en arrière.`,
-      confirm: "Supprimer",
-      danger: true,
-    });
-    if (!ok) return;
-    btn.disabled = true;
-    try {
-      await api("/api/links/" + encodeURIComponent(l.code), { method: "DELETE" });
-      if ($("result").dataset.code === l.code) $("result").hidden = true;
-      await animateOut(btn.closest(".link-item"));
-      toast("Lien supprimé.");
-      loadList();
-    } catch (e) {
-      btn.disabled = false;
-      toast(e.message, "err");
+  function bars(seed) {
+    const box = $("dBars");
+    box.replaceChildren();
+    for (let i = 0; i < 14; i++) {
+      const b = document.createElement("i");
+      b.style.height = 20 + Math.round(Math.abs(Math.sin(seed + i * .7)) * 80) + "%";
+      b.style.animationDelay = i * 30 + "ms";
+      box.append(b);
     }
   }
+  function split(items) {
+    $("dSplit").replaceChildren(...items.map((t) => { const s = document.createElement("span"); s.className = "pill"; s.textContent = t; return s; }));
+  }
+  function countUp(to) {
+    const t0 = performance.now();
+    (function tick(t) {
+      const k = Math.min(1, (t - t0) / 900);
+      $("dViews").textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(tick);
+    })(t0);
+  }
 
-  /* ----- Création ----- */
-  $("form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    $("error").textContent = "";
-    const alias = $("alias").value.trim();
-    if (!$("url").value.trim()) { $("error").textContent = "Colle d'abord l'adresse à raccourcir."; $("url").focus(); return; }
-    if (alias && !/^[a-zA-Z0-9_-]{3,30}$/.test(alias)) {
-      $("error").textContent = "Nom personnalisé : 3 à 30 caractères, uniquement lettres, chiffres, - et _.";
-      $("alias").focus();
-      return;
+  async function play() {
+    const demo = document.querySelector(".demo");
+    for (let n = 0; ; n = (n + 1) % EXAMPLES.length) {
+      const ex = EXAMPLES[n];
+      demo.classList.remove("done");
+      $("dLong").textContent = ex.long;
+      $("dCode").textContent = "";
+      $("dViews").textContent = "0";
+      $("dBars").replaceChildren();
+      $("dSplit").replaceChildren();
+      await sleep(700);
+      for (const ch of ex.code) { $("dCode").textContent += ch; await sleep(55 + Math.random() * 50); }
+      await sleep(250);
+      demo.classList.add("done");
+      bars(n * 2); split(ex.split); countUp(ex.views);
+      await sleep(4200);
     }
-    $("submit").disabled = true;
-    $("submit").textContent = "Création…";
-    try {
-      const data = await api("/api/shorten", {
-        method: "POST",
-        body: JSON.stringify({ url: $("url").value, alias, expiresInDays: $("exp").value }),
-      });
-      $("short").href = data.shortUrl;
-      $("short").textContent = bare(data.shortUrl);
-      $("resultDest").textContent = data.url;
-      $("statsLink").href = "/stats/" + encodeURIComponent(data.code);
-      $("qrBtn").onclick = () => openQr(data.code, data.shortUrl);
-      $("copy").onclick = () => copy(data.shortUrl, $("copy"));
-      $("result").dataset.code = data.code;
-      $("result").hidden = false;
-      $("form").reset();
-      $("result").scrollIntoView({ block: "nearest" });
-      loadList();
-    } catch (err) {
-      if (err.status === 401) openAuth("login");
-      $("error").textContent = err.message;
-    } finally {
-      $("submit").disabled = false;
-      $("submit").textContent = "Raccourcir";
-    }
-  });
-
-  $("list").innerHTML = '<div class="skel"></div><div class="skel"></div>';
-  refreshMe();
-  loadList();
+  }
+  if (reduce) { bars(0); split(EXAMPLES[0].split); document.querySelector(".demo").classList.add("done"); }
+  else play();
 </script>
 </body>
 </html>
